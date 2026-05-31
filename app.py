@@ -11,7 +11,23 @@ st.set_page_config(
     layout="wide"
 )
 
+@st.cache_data(ttl=300)
+def cached_price(stock):
+    return get_stock_price(stock)
+
+@st.cache_data(ttl=300)
+def cached_recommendation(stock):
+    return get_recommendation(stock)
+
+@st.cache_data(ttl=300)
+def cached_tradeplan(stock, action):
+    return get_intraday_tradeplan(stock, action)
+
 st.title("SMART F&O DECISION ENGINE V2")
+
+if st.button("🔄 Refresh Scanner"):
+    st.cache_data.clear()
+    st.rerun()
 
 stocks = load_stocks()
 
@@ -19,7 +35,7 @@ results = []
 
 for stock in stocks:
 
-    price = get_stock_price(stock)
+    price = cached_price(stock)
 
     if price is None:
         continue
@@ -27,14 +43,17 @@ for stock in stocks:
     if price < 2500:
         continue
 
-    action, confidence, entry_window = get_recommendation(stock)
+    action, confidence, entry_window = cached_recommendation(stock)
 
     if confidence < 75:
         continue
 
-    entry, sl, target, rr, setup_time = get_intraday_tradeplan(stock, action)
+    entry, sl, target, rr, setup_time = cached_tradeplan(stock, action)
 
     priority = get_priority(setup_time)
+
+    if priority == "LOW":
+        continue
 
     if confidence >= 90:
         status = "READY"
@@ -58,7 +77,7 @@ for stock in stocks:
 df = pd.DataFrame(results)
 
 if len(df) == 0:
-    st.warning("No trade setups found right now.")
+    st.warning("No HIGH/NORMAL priority trade setups found right now.")
     st.stop()
 
 priority_order = {
@@ -68,7 +87,7 @@ priority_order = {
 }
 
 df["Priority Score"] = df["Priority"].map(priority_order)
-df = df[df["Priority"] != "LOW"]
+
 df = df.sort_values(
     by=["Priority Score", "Confidence"],
     ascending=False
