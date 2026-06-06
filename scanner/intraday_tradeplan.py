@@ -94,7 +94,7 @@ def get_intraday_tradeplan(symbol, action):
             if candle_time < time(9, 30):
                 continue
 
-            if candle_time > time(14, 0):
+            if candle_time > time(12, 30):
                 continue
 
             if pd.isna(avg_volume.iloc[i]) or avg_volume.iloc[i] == 0:
