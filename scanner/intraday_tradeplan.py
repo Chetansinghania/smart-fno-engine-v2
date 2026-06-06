@@ -1,10 +1,66 @@
+import os
 import yfinance as yf
-from datetime import timedelta
+import pandas as pd
+from datetime import datetime, timedelta, time
+from scanner.volatility import get_daily_volatility
+
+LOCK_FILE = os.path.join(os.path.dirname(__file__), "locked_signals.csv")
+
+
+def load_locked_signals():
+    if os.path.exists(LOCK_FILE):
+        return pd.read_csv(LOCK_FILE)
+
+    return pd.DataFrame(columns=[
+        "date", "symbol", "action", "entry", "sl", "target", "risk_reward", "setup_time"
+    ])
+
+
+def get_locked_signal(symbol):
+    today = datetime.now().strftime("%Y-%m-%d")
+    locked = load_locked_signals()
+
+    row = locked[
+        (locked["date"] == today) &
+        (locked["symbol"] == symbol)
+    ]
+
+    if not row.empty:
+        row = row.iloc[0]
+        return row["entry"], row["sl"], row["target"], row["risk_reward"], row["setup_time"]
+
+    return None
+
+
+def save_locked_signal(symbol, action, entry, sl, target, risk_reward, setup_time):
+    today = datetime.now().strftime("%Y-%m-%d")
+    locked = load_locked_signals()
+
+    new_row = {
+        "date": today,
+        "symbol": symbol,
+        "action": action,
+        "entry": entry,
+        "sl": sl,
+        "target": target,
+        "risk_reward": risk_reward,
+        "setup_time": setup_time
+    }
+
+    locked = pd.concat([locked, pd.DataFrame([new_row])], ignore_index=True)
+    locked.to_csv(LOCK_FILE, index=False)
+
+    return entry, sl, target, risk_reward, setup_time
 
 
 def get_intraday_tradeplan(symbol, action):
 
     try:
+        locked_signal = get_locked_signal(symbol)
+
+        if locked_signal is not None:
+            return locked_signal
+
         data = yf.download(
             symbol,
             period="5d",
@@ -16,6 +72,8 @@ def get_intraday_tradeplan(symbol, action):
         if len(data) < 30:
             return None, None, None, None, "WAIT"
 
+        data = data.dropna()
+
         close = data["Close"].squeeze()
         high = data["High"].squeeze()
         low = data["Low"].squeeze()
@@ -24,56 +82,78 @@ def get_intraday_tradeplan(symbol, action):
         ema20 = close.ewm(span=20).mean()
         avg_volume = volume.rolling(20).mean()
 
+        typical_price = (high + low + close) / 3
+        vwap = (typical_price * volume).cumsum() / volume.cumsum()
+
         signal_index = None
 
         for i in range(25, len(data)):
 
+            candle_time = data.index[i].time()
+
+            if candle_time < time(9, 30):
+                continue
+
+            if candle_time > time(14, 0):
+                continue
+
+            if pd.isna(avg_volume.iloc[i]) or avg_volume.iloc[i] == 0:
+                continue
+
+            rvol = volume.iloc[i] / avg_volume.iloc[i]
+
             if action == "BUY":
-                if close.iloc[i] > ema20.iloc[i] and volume.iloc[i] > avg_volume.iloc[i]:
+                if (
+                    close.iloc[i] > ema20.iloc[i]
+                    and close.iloc[i] > vwap.iloc[i]
+                    and rvol >= 1.8
+                ):
                     signal_index = i
+                    break
 
             elif action == "SELL":
-                if close.iloc[i] < ema20.iloc[i] and volume.iloc[i] > avg_volume.iloc[i]:
+                if (
+                    close.iloc[i] < ema20.iloc[i]
+                    and close.iloc[i] < vwap.iloc[i]
+                    and rvol >= 1.8
+                ):
                     signal_index = i
+                    break
 
         if signal_index is None:
             return None, None, None, None, "WAIT"
 
         entry = round(float(close.iloc[signal_index]), 2)
 
-        recent_high = round(float(high.iloc[max(0, signal_index-5):signal_index+1].max()), 2)
-        recent_low = round(float(low.iloc[max(0, signal_index-5):signal_index+1].min()), 2)
+        daily_volatility = get_daily_volatility(symbol)
 
-        candle_time = data.index[signal_index]
-        start_time = candle_time.strftime("%H:%M")
-        end_time = (candle_time + timedelta(minutes=15)).strftime("%H:%M")
-
-        entry_window = f"{start_time}-{end_time}"
+        target_pct = daily_volatility * 0.30
+        sl_pct = daily_volatility * 0.15
 
         if action == "BUY":
-
-            sl = recent_low
-            risk = entry - sl
-
-            if risk <= 0:
-                return None, None, None, None, "WAIT"
-
-            target = round(entry + (risk * 2), 2)
+            sl = round(entry * (1 - sl_pct / 100), 2)
+            target = round(entry * (1 + target_pct / 100), 2)
 
         elif action == "SELL":
-
-            sl = recent_high
-            risk = sl - entry
-
-            if risk <= 0:
-                return None, None, None, None, "WAIT"
-
-            target = round(entry - (risk * 2), 2)
+            sl = round(entry * (1 + sl_pct / 100), 2)
+            target = round(entry * (1 - target_pct / 100), 2)
 
         else:
             return None, None, None, None, "WAIT"
 
-        return entry, sl, target, "1:2", entry_window
+        candle_time = data.index[signal_index]
+        setup_time = f"{candle_time.strftime('%H:%M')}-{(candle_time + timedelta(minutes=15)).strftime('%H:%M')}"
 
-    except:
+        return save_locked_signal(
+            symbol,
+            action,
+            entry,
+            sl,
+            target,
+            "1:2",
+            setup_time
+        )
+
+    except Exception as e:
+        print("Tradeplan error:", symbol, e)
         return None, None, None, None, "WAIT"

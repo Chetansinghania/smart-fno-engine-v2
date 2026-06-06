@@ -4,7 +4,6 @@ import pandas as pd
 from scanner.universe import load_stocks, get_stock_price
 from scanner.recommendation import get_recommendation
 from scanner.intraday_tradeplan import get_intraday_tradeplan
-from scanner.priority import get_priority
 
 st.set_page_config(
     page_title="SMART F&O ENGINE V2",
@@ -45,25 +44,21 @@ for stock in stocks:
 
     action, confidence, entry_window = cached_recommendation(stock)
 
+    if action not in ["BUY", "SELL"]:
+        continue
+
     if confidence < 75:
         continue
 
     entry, sl, target, rr, setup_time = cached_tradeplan(stock, action)
 
-    priority = get_priority(setup_time)
-
-    if priority == "LOW":
+    # Only confirmed trades
+    if entry is None:
         continue
-
-    if confidence >= 90:
-        status = "READY"
-    else:
-        status = "WATCH"
 
     results.append({
         "Stock": stock,
-        "Status": status,
-        "Priority": priority,
+        "Status": "READY",
         "Price": price,
         "Action": action,
         "Confidence": confidence,
@@ -77,23 +72,13 @@ for stock in stocks:
 df = pd.DataFrame(results)
 
 if len(df) == 0:
-    st.warning("No HIGH/NORMAL priority trade setups found right now.")
+    st.warning("No confirmed BUY/SELL setup found right now.")
     st.stop()
 
-priority_order = {
-    "HIGH": 3,
-    "NORMAL": 2,
-    "LOW": 1
-}
-
-df["Priority Score"] = df["Priority"].map(priority_order)
-
 df = df.sort_values(
-    by=["Priority Score", "Confidence"],
+    by=["Confidence"],
     ascending=False
 )
-
-df = df.drop(columns=["Priority Score"])
 
 buy_count = len(df[df["Action"] == "BUY"])
 sell_count = len(df[df["Action"] == "SELL"])
