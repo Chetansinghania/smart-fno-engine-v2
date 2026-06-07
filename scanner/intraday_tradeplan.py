@@ -53,6 +53,45 @@ def save_locked_signal(symbol, action, entry, sl, target, risk_reward, setup_tim
     return entry, sl, target, risk_reward, setup_time
 
 
+def get_nifty_market_bias():
+    try:
+        nifty = yf.download(
+            "^NSEI",
+            period="5d",
+            interval="15m",
+            progress=False,
+            auto_adjust=True
+        )
+
+        if len(nifty) < 30:
+            return "NEUTRAL"
+
+        nifty = nifty.dropna()
+
+        close = nifty["Close"].squeeze()
+        high = nifty["High"].squeeze()
+        low = nifty["Low"].squeeze()
+        volume = nifty["Volume"].squeeze()
+
+        typical_price = (high + low + close) / 3
+        vwap = (typical_price * volume).cumsum() / volume.cumsum()
+
+        last_close = float(close.iloc[-1])
+        last_vwap = float(vwap.iloc[-1])
+
+        if last_close > last_vwap:
+            return "BULLISH"
+
+        if last_close < last_vwap:
+            return "BEARISH"
+
+        return "NEUTRAL"
+
+    except Exception as e:
+        print("NIFTY bias error:", e)
+        return "NEUTRAL"
+
+
 def get_intraday_tradeplan(symbol, action):
 
     try:
@@ -60,6 +99,14 @@ def get_intraday_tradeplan(symbol, action):
 
         if locked_signal is not None:
             return locked_signal
+
+        market_bias = get_nifty_market_bias()
+
+        if action == "BUY" and market_bias != "BULLISH":
+            return None, None, None, None, "WAIT"
+
+        if action == "SELL" and market_bias != "BEARISH":
+            return None, None, None, None, "WAIT"
 
         data = yf.download(
             symbol,
@@ -91,10 +138,10 @@ def get_intraday_tradeplan(symbol, action):
 
             candle_time = data.index[i].time()
 
-            if candle_time < time(9, 30):
+            if candle_time < time(9, 45):
                 continue
 
-            if candle_time > time(12, 30):
+            if candle_time > time(11, 45):
                 continue
 
             if pd.isna(avg_volume.iloc[i]) or avg_volume.iloc[i] == 0:
@@ -105,6 +152,7 @@ def get_intraday_tradeplan(symbol, action):
             if action == "BUY":
                 if (
                     close.iloc[i] > ema20.iloc[i]
+                    and close.iloc[i] <= ema20.iloc[i] * 1.02
                     and close.iloc[i] > vwap.iloc[i]
                     and rvol >= 1.8
                 ):
@@ -114,6 +162,7 @@ def get_intraday_tradeplan(symbol, action):
             elif action == "SELL":
                 if (
                     close.iloc[i] < ema20.iloc[i]
+                    and close.iloc[i] >= ema20.iloc[i] * 0.98
                     and close.iloc[i] < vwap.iloc[i]
                     and rvol >= 1.8
                 ):
