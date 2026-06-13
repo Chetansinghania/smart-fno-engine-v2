@@ -53,6 +53,18 @@ def save_locked_signal(symbol, action, entry, sl, target, risk_reward, setup_tim
     return entry, sl, target, risk_reward, setup_time
 
 
+def calculate_daily_vwap(data, high, low, close, volume):
+    typical_price = (high + low + close) / 3
+    date_group = data.index.date
+
+    vwap = (
+        (typical_price * volume).groupby(date_group).cumsum()
+        / volume.groupby(date_group).cumsum()
+    )
+
+    return vwap
+
+
 def get_nifty_market_bias():
     try:
         nifty = yf.download(
@@ -73,8 +85,7 @@ def get_nifty_market_bias():
         low = nifty["Low"].squeeze()
         volume = nifty["Volume"].squeeze()
 
-        typical_price = (high + low + close) / 3
-        vwap = (typical_price * volume).cumsum() / volume.cumsum()
+        vwap = calculate_daily_vwap(nifty, high, low, close, volume)
 
         last_close = float(close.iloc[-1])
         last_vwap = float(vwap.iloc[-1])
@@ -129,8 +140,7 @@ def get_intraday_tradeplan(symbol, action):
         ema20 = close.ewm(span=20).mean()
         avg_volume = volume.rolling(20).mean()
 
-        typical_price = (high + low + close) / 3
-        vwap = (typical_price * volume).cumsum() / volume.cumsum()
+        vwap = calculate_daily_vwap(data, high, low, close, volume)
 
         signal_index = None
 
@@ -141,7 +151,7 @@ def get_intraday_tradeplan(symbol, action):
             if candle_time < time(9, 45):
                 continue
 
-            if candle_time > time(11, 45):
+            if candle_time > time(12, 30):
                 continue
 
             if pd.isna(avg_volume.iloc[i]) or avg_volume.iloc[i] == 0:
@@ -154,7 +164,7 @@ def get_intraday_tradeplan(symbol, action):
                     close.iloc[i] > ema20.iloc[i]
                     and close.iloc[i] <= ema20.iloc[i] * 1.02
                     and close.iloc[i] > vwap.iloc[i]
-                    and rvol >= 1.8
+                    and rvol >= 1.3
                 ):
                     signal_index = i
                     break
@@ -164,7 +174,7 @@ def get_intraday_tradeplan(symbol, action):
                     close.iloc[i] < ema20.iloc[i]
                     and close.iloc[i] >= ema20.iloc[i] * 0.98
                     and close.iloc[i] < vwap.iloc[i]
-                    and rvol >= 1.8
+                    and rvol >= 1.3
                 ):
                     signal_index = i
                     break
