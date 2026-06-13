@@ -176,3 +176,138 @@ Features Active:
 * Signal Locking
 * Streamlit Dashboard
 * GitHub Deployment
+
+
+# SMART F&O ENGINE PROJECT NOTES
+
+## Date
+
+13-Jun-2026
+
+## Audit Findings
+
+### Initial Result
+
+Total Stocks = 48
+
+Price > 2500 = 28
+
+Trend Passed = 28
+
+Tradeplan Passed = 0
+
+Result:
+No strong intraday setup found.
+
+---
+
+## Root Cause Investigation
+
+Trend filter was not the issue.
+
+Main bottleneck found inside:
+
+* NIFTY Market Filter
+* Intraday Tradeplan filters
+
+After disabling NIFTY filter for audit:
+
+Total Stocks = 48
+
+Price > 2500 = 28
+
+Trend Passed = 28
+
+Tradeplan Passed = 23
+
+Result:
+Scanner logic is working.
+
+Problem is trade selection, not trade generation.
+
+---
+
+## Key Learning
+
+Previous assumption:
+
+Need more filters.
+
+Actual finding:
+
+Need better ranking and selection.
+
+---
+
+## SMART F&O ENGINE V4 PLAN
+
+### Objective
+
+Show only:
+
+* Market Decision
+* Primary Trade
+* Backup Trade
+
+### Market Decision Logic
+
+If BUY signals > SELL signals
+
+→ BUY ONLY
+
+If SELL signals > BUY signals
+
+→ SELL ONLY
+
+If difference is small
+
+→ NO TRADE
+
+---
+
+### Stock Ranking
+
+Rank using:
+
+* ROLV
+* EMA Distance
+* VWAP Distance
+
+---
+
+### Output Format
+
+MARKET DECISION
+
+PRIMARY TRADE
+
+BACKUP TRADE
+
+---
+
+### Trading Rules
+
+Trade Primary first.
+
+If Primary hits Target:
+Stop Trading.
+
+If Primary hits SL:
+Take Backup Trade.
+
+Maximum 2 trades per day.
+
+No BUY and SELL together.
+
+---
+
+## Current Status
+
+Version:
+SMART F&O ENGINE V3.1 AUDIT
+
+Status:
+Working
+
+Next Version:
+SMART F&O ENGINE V4

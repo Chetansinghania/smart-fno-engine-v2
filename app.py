@@ -6,13 +6,13 @@ from scanner.recommendation import get_recommendation
 from scanner.intraday_tradeplan import get_intraday_tradeplan
 
 st.set_page_config(
-    page_title="SMART F&O ENGINE V3",
+    page_title="SMART F&O ENGINE V4 FINAL",
     layout="wide"
 )
 
-st.title("SMART F&O ENGINE V3")
+st.title("SMART F&O ENGINE V4 FINAL - ROLV RANKING")
 
-if st.button("🔄 Refresh Scanner"):
+if st.button("Refresh Scanner"):
     st.cache_data.clear()
     st.rerun()
 
@@ -37,7 +37,6 @@ stocks = load_stocks()
 results = []
 
 for stock in stocks:
-
     price = cached_price(stock)
 
     if price is None:
@@ -51,7 +50,7 @@ for stock in stocks:
     if action not in ["BUY", "SELL"]:
         continue
 
-    entry, sl, target, rr, setup_time = cached_tradeplan(stock, action)
+    entry, sl, target, rr, setup_time, rolv = cached_tradeplan(stock, action)
 
     if setup_time == "WAIT":
         continue
@@ -62,6 +61,7 @@ for stock in stocks:
     results.append({
         "Stock": stock,
         "Action": action,
+        "ROLV": rolv,
         "Entry Time": setup_time,
         "Entry": entry,
         "SL": sl,
@@ -69,22 +69,69 @@ for stock in stocks:
         "RR": rr
     })
 
+
 df = pd.DataFrame(results)
 
 if len(df) == 0:
-    st.warning("No strong intraday setup found right now.")
+    st.warning("No trade setup found right now.")
     st.stop()
 
-buy_df = df[df["Action"] == "BUY"].head(5)
-sell_df = df[df["Action"] == "SELL"].head(5)
 
-col1, col2 = st.columns(2)
+buy_count = len(df[df["Action"] == "BUY"])
+sell_count = len(df[df["Action"] == "SELL"])
 
-col1.metric("BUY Setups", len(buy_df))
-col2.metric("SELL Setups", len(sell_df))
+st.subheader("Signal Summary")
 
-st.subheader("🟢 TOP BUY SETUPS")
-st.dataframe(buy_df, use_container_width=True)
+col1, col2, col3 = st.columns(3)
+col1.metric("Total Signals", len(df))
+col2.metric("BUY Signals", buy_count)
+col3.metric("SELL Signals", sell_count)
 
-st.subheader("🔴 TOP SELL SETUPS")
-st.dataframe(sell_df, use_container_width=True)
+
+ranked_df = df.sort_values(
+    by=["ROLV", "Entry Time"],
+    ascending=[False, True]
+).head(2)
+
+
+st.subheader("FINAL DECISION")
+
+st.success("Primary = Highest ROLV. Backup = Second Highest ROLV.")
+
+
+st.subheader("PRIMARY TRADE")
+
+primary_trade = ranked_df.iloc[0]
+
+st.dataframe(
+    pd.DataFrame([primary_trade]),
+    use_container_width=True
+)
+
+
+if len(ranked_df) > 1:
+    st.subheader("BACKUP TRADE")
+
+    backup_trade = ranked_df.iloc[1]
+
+    st.dataframe(
+        pd.DataFrame([backup_trade]),
+        use_container_width=True
+    )
+
+
+st.subheader("Trading Rule")
+
+st.info(
+    "Take Primary Trade first. "
+    "If Primary hits Target, stop trading for the day. "
+    "If Primary hits SL before 12:30, then take Backup Trade only if entry is still valid. "
+    "Maximum 2 trades per day. Ranking is based only on ROLV."
+)
+
+
+with st.expander("Show All Scanner Signals"):
+    st.dataframe(
+        df.sort_values(by=["ROLV", "Entry Time"], ascending=[False, True]),
+        use_container_width=True
+    )

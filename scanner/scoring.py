@@ -1,52 +1,96 @@
 import yfinance as yf
+import pandas as pd
+from datetime import time
+
+
+def calculate_daily_vwap(data, high, low, close, volume):
+    typical_price = (high + low + close) / 3
+    date_group = data.index.date
+
+    vwap = (
+        (typical_price * volume).groupby(date_group).cumsum()
+        / volume.groupby(date_group).cumsum()
+    )
+
+    return vwap
 
 
 def get_score(symbol, action):
-
     try:
         data = yf.download(
             symbol,
-            period="3mo",
-            interval="1d",
+            period="5d",
+            interval="15m",
             progress=False,
             auto_adjust=True
         )
 
         if len(data) < 30:
-            return 40
+            return 0
+
+        data = data.dropna()
 
         close = data["Close"].squeeze()
         high = data["High"].squeeze()
         low = data["Low"].squeeze()
         volume = data["Volume"].squeeze()
 
-        daily_range = high - low
-        avg_range = daily_range.tail(20).mean()
-        today_range = daily_range.iloc[-1]
+        ema20 = close.ewm(span=20).mean()
+        avg_volume = volume.rolling(20).mean()
+        vwap = calculate_daily_vwap(data, high, low, close, volume)
 
-        atr_score = 15 if today_range > avg_range else 0
+        best_score = 0
 
-        avg_volume = volume.tail(20).mean()
-        today_volume = volume.iloc[-1]
+        for i in range(25, len(data)):
 
-        volume_score = 15 if today_volume > avg_volume else 0
+            candle_time = data.index[i].time()
 
-        latest_close = close.iloc[-1]
-        avg_close_20 = close.tail(20).mean()
+            if candle_time < time(9, 45):
+                continue
 
-        momentum_score = 0
+            if candle_time > time(12, 30):
+                continue
 
-        if action == "BUY" and latest_close > avg_close_20:
-            momentum_score = 20
+            if pd.isna(avg_volume.iloc[i]) or avg_volume.iloc[i] == 0:
+                continue
 
-        elif action == "SELL" and latest_close < avg_close_20:
-            momentum_score = 20
+            price = float(close.iloc[i])
+            ema = float(ema20.iloc[i])
+            vw = float(vwap.iloc[i])
+            rvol = float(volume.iloc[i] / avg_volume.iloc[i])
 
-        base_score = 40
+            score = 0
 
-        final_score = base_score + atr_score + volume_score + momentum_score
+            if action == "BUY":
+                if price > ema:
+                    score += 25
 
-        return min(final_score, 100)
+                if price > vw:
+                    score += 25
 
-    except:
-        return 40
+                if price <= ema * 1.02:
+                    score += 15
+
+                if rvol >= 1.3:
+                    score += min(rvol * 20, 35)
+
+            elif action == "SELL":
+                if price < ema:
+                    score += 25
+
+                if price < vw:
+                    score += 25
+
+                if price >= ema * 0.98:
+                    score += 15
+
+                if rvol >= 1.3:
+                    score += min(rvol * 20, 35)
+
+            best_score = max(best_score, score)
+
+        return round(best_score, 2)
+
+    except Exception as e:
+        print("Scoring error:", symbol, e)
+        return 0

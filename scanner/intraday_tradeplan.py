@@ -12,7 +12,8 @@ def load_locked_signals():
         return pd.read_csv(LOCK_FILE)
 
     return pd.DataFrame(columns=[
-        "date", "symbol", "action", "entry", "sl", "target", "risk_reward", "setup_time"
+        "date", "symbol", "action", "entry", "sl", "target",
+        "risk_reward", "setup_time", "rolv"
     ])
 
 
@@ -27,12 +28,19 @@ def get_locked_signal(symbol):
 
     if not row.empty:
         row = row.iloc[0]
-        return row["entry"], row["sl"], row["target"], row["risk_reward"], row["setup_time"]
+        return (
+            row["entry"],
+            row["sl"],
+            row["target"],
+            row["risk_reward"],
+            row["setup_time"],
+            row.get("rolv", 0)
+        )
 
     return None
 
 
-def save_locked_signal(symbol, action, entry, sl, target, risk_reward, setup_time):
+def save_locked_signal(symbol, action, entry, sl, target, risk_reward, setup_time, rolv):
     today = datetime.now().strftime("%Y-%m-%d")
     locked = load_locked_signals()
 
@@ -44,13 +52,14 @@ def save_locked_signal(symbol, action, entry, sl, target, risk_reward, setup_tim
         "sl": sl,
         "target": target,
         "risk_reward": risk_reward,
-        "setup_time": setup_time
+        "setup_time": setup_time,
+        "rolv": rolv
     }
 
     locked = pd.concat([locked, pd.DataFrame([new_row])], ignore_index=True)
     locked.to_csv(LOCK_FILE, index=False)
 
-    return entry, sl, target, risk_reward, setup_time
+    return entry, sl, target, risk_reward, setup_time, rolv
 
 
 def calculate_daily_vwap(data, high, low, close, volume):
@@ -65,44 +74,6 @@ def calculate_daily_vwap(data, high, low, close, volume):
     return vwap
 
 
-def get_nifty_market_bias():
-    try:
-        nifty = yf.download(
-            "^NSEI",
-            period="5d",
-            interval="15m",
-            progress=False,
-            auto_adjust=True
-        )
-
-        if len(nifty) < 30:
-            return "NEUTRAL"
-
-        nifty = nifty.dropna()
-
-        close = nifty["Close"].squeeze()
-        high = nifty["High"].squeeze()
-        low = nifty["Low"].squeeze()
-        volume = nifty["Volume"].squeeze()
-
-        vwap = calculate_daily_vwap(nifty, high, low, close, volume)
-
-        last_close = float(close.iloc[-1])
-        last_vwap = float(vwap.iloc[-1])
-
-        if last_close > last_vwap:
-            return "BULLISH"
-
-        if last_close < last_vwap:
-            return "BEARISH"
-
-        return "NEUTRAL"
-
-    except Exception as e:
-        print("NIFTY bias error:", e)
-        return "NEUTRAL"
-
-
 def get_intraday_tradeplan(symbol, action):
 
     try:
@@ -110,14 +81,6 @@ def get_intraday_tradeplan(symbol, action):
 
         if locked_signal is not None:
             return locked_signal
-
-        market_bias = get_nifty_market_bias()
-
-        if action == "BUY" and market_bias != "BULLISH":
-            return None, None, None, None, "WAIT"
-
-        if action == "SELL" and market_bias != "BEARISH":
-            return None, None, None, None, "WAIT"
 
         data = yf.download(
             symbol,
@@ -128,7 +91,7 @@ def get_intraday_tradeplan(symbol, action):
         )
 
         if len(data) < 30:
-            return None, None, None, None, "WAIT"
+            return None, None, None, None, "WAIT", 0
 
         data = data.dropna()
 
@@ -143,6 +106,7 @@ def get_intraday_tradeplan(symbol, action):
         vwap = calculate_daily_vwap(data, high, low, close, volume)
 
         signal_index = None
+        signal_rolv = 0
 
         for i in range(25, len(data)):
 
@@ -157,7 +121,7 @@ def get_intraday_tradeplan(symbol, action):
             if pd.isna(avg_volume.iloc[i]) or avg_volume.iloc[i] == 0:
                 continue
 
-            rvol = volume.iloc[i] / avg_volume.iloc[i]
+            rvol = float(volume.iloc[i] / avg_volume.iloc[i])
 
             if action == "BUY":
                 if (
@@ -167,6 +131,7 @@ def get_intraday_tradeplan(symbol, action):
                     and rvol >= 1.3
                 ):
                     signal_index = i
+                    signal_rolv = round(rvol, 2)
                     break
 
             elif action == "SELL":
@@ -177,10 +142,11 @@ def get_intraday_tradeplan(symbol, action):
                     and rvol >= 1.3
                 ):
                     signal_index = i
+                    signal_rolv = round(rvol, 2)
                     break
 
         if signal_index is None:
-            return None, None, None, None, "WAIT"
+            return None, None, None, None, "WAIT", 0
 
         entry = round(float(close.iloc[signal_index]), 2)
 
@@ -198,7 +164,7 @@ def get_intraday_tradeplan(symbol, action):
             target = round(entry * (1 - target_pct / 100), 2)
 
         else:
-            return None, None, None, None, "WAIT"
+            return None, None, None, None, "WAIT", 0
 
         candle_time = data.index[signal_index]
         setup_time = f"{candle_time.strftime('%H:%M')}-{(candle_time + timedelta(minutes=15)).strftime('%H:%M')}"
@@ -210,9 +176,10 @@ def get_intraday_tradeplan(symbol, action):
             sl,
             target,
             "1:2",
-            setup_time
+            setup_time,
+            signal_rolv
         )
 
     except Exception as e:
         print("Tradeplan error:", symbol, e)
-        return None, None, None, None, "WAIT"
+        return None, None, None, None, "WAIT", 0
