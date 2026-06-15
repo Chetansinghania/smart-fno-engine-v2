@@ -75,7 +75,6 @@ def calculate_daily_vwap(data, high, low, close, volume):
 
 
 def get_intraday_tradeplan(symbol, action):
-
     try:
         locked_signal = get_locked_signal(symbol)
 
@@ -102,14 +101,12 @@ def get_intraday_tradeplan(symbol, action):
 
         ema20 = close.ewm(span=20).mean()
         avg_volume = volume.rolling(20).mean()
-
         vwap = calculate_daily_vwap(data, high, low, close, volume)
 
         signal_index = None
         signal_rolv = 0
 
         for i in range(25, len(data)):
-
             candle_time = data.index[i].time()
 
             if candle_time < time(9, 45):
