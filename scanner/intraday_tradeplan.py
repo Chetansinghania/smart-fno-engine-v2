@@ -1,7 +1,7 @@
 import os
 import yfinance as yf
 import pandas as pd
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta
 from scanner.volatility import get_daily_volatility
 
 LOCK_FILE = os.path.join(os.path.dirname(__file__), "locked_signals.csv")
@@ -21,21 +21,11 @@ def get_locked_signal(symbol):
     today = datetime.now().strftime("%Y-%m-%d")
     locked = load_locked_signals()
 
-    row = locked[
-        (locked["date"] == today) &
-        (locked["symbol"] == symbol)
-    ]
+    row = locked[(locked["date"] == today) & (locked["symbol"] == symbol)]
 
     if not row.empty:
         row = row.iloc[0]
-        return (
-            row["entry"],
-            row["sl"],
-            row["target"],
-            row["risk_reward"],
-            row["setup_time"],
-            row.get("rolv", 0)
-        )
+        return row["entry"], row["sl"], row["target"], row["risk_reward"], row["setup_time"], row.get("rolv", 0)
 
     return None
 
@@ -66,15 +56,13 @@ def calculate_daily_vwap(data, high, low, close, volume):
     typical_price = (high + low + close) / 3
     date_group = data.index.date
 
-    vwap = (
+    return (
         (typical_price * volume).groupby(date_group).cumsum()
         / volume.groupby(date_group).cumsum()
     )
 
-    return vwap
 
-
-def get_intraday_tradeplan(symbol, action):
+def get_intraday_tradeplan(symbol, action, cmp_price):
     try:
         locked_signal = get_locked_signal(symbol)
 
@@ -103,16 +91,15 @@ def get_intraday_tradeplan(symbol, action):
         avg_volume = volume.rolling(20).mean()
         vwap = calculate_daily_vwap(data, high, low, close, volume)
 
+        today = pd.Timestamp.now(tz="Asia/Kolkata").date()
+        today_mask = data.index.date == today
+
         signal_index = None
         signal_rolv = 0
 
         for i in range(25, len(data)):
-            candle_time = data.index[i].time()
 
-            if candle_time < time(9, 45):
-                continue
-
-            if candle_time > time(12, 30):
+            if not today_mask[i]:
                 continue
 
             if pd.isna(avg_volume.iloc[i]) or avg_volume.iloc[i] == 0:
@@ -121,31 +108,42 @@ def get_intraday_tradeplan(symbol, action):
             rvol = float(volume.iloc[i] / avg_volume.iloc[i])
 
             if action == "BUY":
-                if (
+                signal_found = (
                     close.iloc[i] > ema20.iloc[i]
                     and close.iloc[i] <= ema20.iloc[i] * 1.02
                     and close.iloc[i] > vwap.iloc[i]
                     and rvol >= 1.3
-                ):
-                    signal_index = i
-                    signal_rolv = round(rvol, 2)
-                    break
+                )
 
             elif action == "SELL":
-                if (
+                signal_found = (
                     close.iloc[i] < ema20.iloc[i]
                     and close.iloc[i] >= ema20.iloc[i] * 0.98
                     and close.iloc[i] < vwap.iloc[i]
                     and rvol >= 1.3
-                ):
-                    signal_index = i
-                    signal_rolv = round(rvol, 2)
-                    break
+                )
+
+            else:
+                signal_found = False
+
+            if signal_found:
+                signal_index = i
+                signal_rolv = round(rvol, 2)
+                break
 
         if signal_index is None:
             return None, None, None, None, "WAIT", 0
 
-        entry = round(float(close.iloc[signal_index]), 2)
+        latest_ema20 = float(ema20.iloc[-1])
+        latest_vwap = float(vwap.iloc[-1])
+
+        if action == "BUY" and not (cmp_price > latest_ema20 and cmp_price > latest_vwap):
+            return None, None, None, None, "WAIT", 0
+
+        if action == "SELL" and not (cmp_price < latest_ema20 and cmp_price < latest_vwap):
+            return None, None, None, None, "WAIT", 0
+
+        entry = round(float(cmp_price), 2)
 
         daily_volatility = get_daily_volatility(symbol)
 

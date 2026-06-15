@@ -10,7 +10,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("SMART F&O ENGINE V4 FINAL - ROLV RANKING")
+st.title("SMART F&O ENGINE V4 FINAL - CMP ENTRY")
 
 if st.button("Refresh Scanner"):
     st.cache_data.clear()
@@ -28,8 +28,8 @@ def cached_recommendation(stock):
 
 
 @st.cache_data(ttl=300)
-def cached_tradeplan(stock, action):
-    return get_intraday_tradeplan(stock, action)
+def cached_tradeplan(stock, action, price):
+    return get_intraday_tradeplan(stock, action, price)
 
 
 stocks = load_stocks()
@@ -50,7 +50,7 @@ for stock in stocks:
     if action not in ["BUY", "SELL"]:
         continue
 
-    entry, sl, target, rr, setup_time, rolv = cached_tradeplan(stock, action)
+    entry, sl, target, rr, setup_time, rolv = cached_tradeplan(stock, action, price)
 
     if setup_time == "WAIT":
         continue
@@ -58,19 +58,11 @@ for stock in stocks:
     if entry is None or sl is None or target is None:
         continue
 
-    # Remove completed trades
-    if action == "BUY" and price >= target:
-        continue
-
-    if action == "SELL" and price <= target:
-        continue
-
     results.append({
         "Stock": stock,
         "Action": action,
         "CMP": round(price, 2),
         "ROLV": rolv,
-        "Entry Time": setup_time,
         "Entry": entry,
         "SL": sl,
         "Target": target,
@@ -97,14 +89,14 @@ col3.metric("SELL Signals", sell_count)
 
 
 ranked_df = df.sort_values(
-    by=["ROLV", "Entry Time"],
-    ascending=[False, True]
+    by="ROLV",
+    ascending=False
 ).head(2)
 
 
 st.subheader("FINAL DECISION")
 
-st.success("Primary = Highest ROLV among active trades. Backup = Second Highest ROLV.")
+st.success("Entry = Current Market Price. Primary = Highest ROLV.")
 
 
 st.subheader("PRIMARY TRADE")
@@ -131,16 +123,15 @@ if len(ranked_df) > 1:
 st.subheader("Trading Rule")
 
 st.info(
-    "Take Primary Trade first. "
-    "If Primary hits Target, stop trading for the day. "
-    "If Primary hits SL before 12:30, then take Backup Trade. "
-    "Maximum 2 trades per day. "
-    "Completed trades are automatically removed."
+    "Entry is based on current market price when scanner refreshes. "
+    "Take Primary Trade first. If Primary hits Target, stop trading for the day. "
+    "If Primary hits SL, then take Backup Trade. Maximum 2 trades per day. "
+    "Ranking is based only on ROLV."
 )
 
 
 with st.expander("Show All Active Scanner Signals"):
     st.dataframe(
-        df.sort_values(by=["ROLV", "Entry Time"], ascending=[False, True]),
+        df.sort_values(by="ROLV", ascending=False),
         use_container_width=True
     )
