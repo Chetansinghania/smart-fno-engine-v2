@@ -2,9 +2,12 @@ import os
 import yfinance as yf
 import pandas as pd
 from datetime import datetime, timedelta
-from scanner.volatility import get_daily_volatility
 
 LOCK_FILE = os.path.join(os.path.dirname(__file__), "locked_signals.csv")
+
+BUFFER = 0.0005          # 0.05% breakout buffer
+MIN_ROLV = 2.0           # Strong volume only
+VWAP_DISTANCE = 0.003    # 0.30% away from VWAP
 
 
 def load_locked_signals():
@@ -62,6 +65,24 @@ def calculate_daily_vwap(data, high, low, close, volume):
     )
 
 
+def trade_already_completed(action, data, signal_index, sl, target):
+    future_data = data.iloc[signal_index + 1:]
+
+    if future_data.empty:
+        return False
+
+    future_high = future_data["High"].squeeze()
+    future_low = future_data["Low"].squeeze()
+
+    if action == "BUY":
+        return (future_high >= target).any() or (future_low <= sl).any()
+
+    if action == "SELL":
+        return (future_low <= target).any() or (future_high >= sl).any()
+
+    return False
+
+
 def get_intraday_tradeplan(symbol, action, cmp_price):
     try:
         locked_signal = get_locked_signal(symbol)
@@ -94,8 +115,8 @@ def get_intraday_tradeplan(symbol, action, cmp_price):
         today = pd.Timestamp.now(tz="Asia/Kolkata").date()
         today_mask = data.index.date == today
 
-        signal_index = None
-        signal_rolv = 0
+        best_index = None
+        best_rolv = 0
 
         for i in range(25, len(data)):
 
@@ -105,63 +126,72 @@ def get_intraday_tradeplan(symbol, action, cmp_price):
             if pd.isna(avg_volume.iloc[i]) or avg_volume.iloc[i] == 0:
                 continue
 
+            today_data = data[today_mask].loc[:data.index[i]]
+
+            day_high = float(today_data["High"].max())
+            day_low = float(today_data["Low"].min())
+
+            if day_high == day_low:
+                continue
+
+            price_position = (float(close.iloc[i]) - day_low) / (day_high - day_low)
             rvol = float(volume.iloc[i] / avg_volume.iloc[i])
 
             if action == "BUY":
                 signal_found = (
                     close.iloc[i] > ema20.iloc[i]
-                    and close.iloc[i] <= ema20.iloc[i] * 1.02
+                    and ema20.iloc[i] > ema20.iloc[i - 1]
                     and close.iloc[i] > vwap.iloc[i]
-                    and rvol >= 1.3
+                    and ((close.iloc[i] - vwap.iloc[i]) / vwap.iloc[i]) >= VWAP_DISTANCE
+                    and rvol >= MIN_ROLV
+                    and price_position > 0.60
                 )
 
             elif action == "SELL":
                 signal_found = (
                     close.iloc[i] < ema20.iloc[i]
-                    and close.iloc[i] >= ema20.iloc[i] * 0.98
+                    and ema20.iloc[i] < ema20.iloc[i - 1]
                     and close.iloc[i] < vwap.iloc[i]
-                    and rvol >= 1.3
+                    and ((vwap.iloc[i] - close.iloc[i]) / vwap.iloc[i]) >= VWAP_DISTANCE
+                    and rvol >= MIN_ROLV
+                    and price_position < 0.40
                 )
 
             else:
                 signal_found = False
 
-            if signal_found:
-                signal_index = i
-                signal_rolv = round(rvol, 2)
-                break
+            if signal_found and rvol > best_rolv:
+                best_index = i
+                best_rolv = rvol
 
-        if signal_index is None:
+        if best_index is None:
             return None, None, None, None, "WAIT", 0
 
-        latest_ema20 = float(ema20.iloc[-1])
-        latest_vwap = float(vwap.iloc[-1])
-
-        if action == "BUY" and not (cmp_price > latest_ema20 and cmp_price > latest_vwap):
-            return None, None, None, None, "WAIT", 0
-
-        if action == "SELL" and not (cmp_price < latest_ema20 and cmp_price < latest_vwap):
-            return None, None, None, None, "WAIT", 0
-
-        entry = round(float(cmp_price), 2)
-
-        daily_volatility = get_daily_volatility(symbol)
-
-        target_pct = daily_volatility * 0.30
-        sl_pct = daily_volatility * 0.15
+        signal_high = float(high.iloc[best_index])
+        signal_low = float(low.iloc[best_index])
 
         if action == "BUY":
-            sl = round(entry * (1 - sl_pct / 100), 2)
-            target = round(entry * (1 + target_pct / 100), 2)
+            entry = round(signal_high * (1 + BUFFER), 2)
+            sl = round(signal_low, 2)
+            risk = entry - sl
+            target = round(entry + (risk * 2), 2)
 
         elif action == "SELL":
-            sl = round(entry * (1 + sl_pct / 100), 2)
-            target = round(entry * (1 - target_pct / 100), 2)
+            entry = round(signal_low * (1 - BUFFER), 2)
+            sl = round(signal_high, 2)
+            risk = sl - entry
+            target = round(entry - (risk * 2), 2)
 
         else:
             return None, None, None, None, "WAIT", 0
 
-        candle_time = data.index[signal_index]
+        if risk <= 0:
+            return None, None, None, None, "WAIT", 0
+
+        if trade_already_completed(action, data, best_index, sl, target):
+            return None, None, None, None, "WAIT", 0
+
+        candle_time = data.index[best_index]
         setup_time = f"{candle_time.strftime('%H:%M')}-{(candle_time + timedelta(minutes=15)).strftime('%H:%M')}"
 
         return save_locked_signal(
@@ -172,7 +202,7 @@ def get_intraday_tradeplan(symbol, action, cmp_price):
             target,
             "1:2",
             setup_time,
-            signal_rolv
+            round(best_rolv, 2)
         )
 
     except Exception as e:
