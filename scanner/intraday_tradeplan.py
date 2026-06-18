@@ -6,8 +6,8 @@ from datetime import datetime, timedelta
 LOCK_FILE = os.path.join(os.path.dirname(__file__), "locked_signals.csv")
 
 BUFFER = 0.0005          # 0.05% breakout buffer
-MIN_ROLV = 2.0           # Strong volume only
-VWAP_DISTANCE = 0.003    # 0.30% away from VWAP
+MIN_ROLV = 1.8           # Relaxed from 2.0
+VWAP_DISTANCE = 0.0015   # 0.15% away from VWAP
 
 
 def load_locked_signals():
@@ -126,15 +126,6 @@ def get_intraday_tradeplan(symbol, action, cmp_price):
             if pd.isna(avg_volume.iloc[i]) or avg_volume.iloc[i] == 0:
                 continue
 
-            today_data = data[today_mask].loc[:data.index[i]]
-
-            day_high = float(today_data["High"].max())
-            day_low = float(today_data["Low"].min())
-
-            if day_high == day_low:
-                continue
-
-            price_position = (float(close.iloc[i]) - day_low) / (day_high - day_low)
             rvol = float(volume.iloc[i] / avg_volume.iloc[i])
 
             if action == "BUY":
@@ -144,7 +135,6 @@ def get_intraday_tradeplan(symbol, action, cmp_price):
                     and close.iloc[i] > vwap.iloc[i]
                     and ((close.iloc[i] - vwap.iloc[i]) / vwap.iloc[i]) >= VWAP_DISTANCE
                     and rvol >= MIN_ROLV
-                    and price_position > 0.60
                 )
 
             elif action == "SELL":
@@ -154,7 +144,6 @@ def get_intraday_tradeplan(symbol, action, cmp_price):
                     and close.iloc[i] < vwap.iloc[i]
                     and ((vwap.iloc[i] - close.iloc[i]) / vwap.iloc[i]) >= VWAP_DISTANCE
                     and rvol >= MIN_ROLV
-                    and price_position < 0.40
                 )
 
             else:
