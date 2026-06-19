@@ -6,11 +6,11 @@ from scanner.recommendation import get_recommendation
 from scanner.intraday_tradeplan import get_intraday_tradeplan
 
 st.set_page_config(
-    page_title="SMART F&O ENGINE V4 FINAL",
+    page_title="SMART F&O ENGINE V5.2",
     layout="wide"
 )
 
-st.title("SMART F&O ENGINE V4 FINAL - CMP ENTRY")
+st.title("SMART F&O ENGINE V5.2 - TOP 3 TRADES")
 
 if st.button("Refresh Scanner"):
     st.cache_data.clear()
@@ -91,42 +91,26 @@ col3.metric("SELL Signals", sell_count)
 ranked_df = df.sort_values(
     by="ROLV",
     ascending=False
-).head(2)
+).head(3)
 
 
-st.subheader("FINAL DECISION")
+st.subheader("TOP 3 TRADES")
 
-st.success("Entry = Current Market Price. Primary = Highest ROLV.")
-
-
-st.subheader("PRIMARY TRADE")
-
-primary_trade = ranked_df.iloc[0]
+st.success("Top 3 trades are ranked by ROLV. Trade only one at a time.")
 
 st.dataframe(
-    pd.DataFrame([primary_trade]),
+    ranked_df,
     use_container_width=True
 )
-
-
-if len(ranked_df) > 1:
-    st.subheader("BACKUP TRADE")
-
-    backup_trade = ranked_df.iloc[1]
-
-    st.dataframe(
-        pd.DataFrame([backup_trade]),
-        use_container_width=True
-    )
 
 
 st.subheader("Trading Rule")
 
 st.info(
-    "Entry is based on current market price when scanner refreshes. "
-    "Take Primary Trade first. If Primary hits Target, stop trading for the day. "
-    "If Primary hits SL, then take Backup Trade. Maximum 2 trades per day. "
-    "Ranking is based only on ROLV."
+    "Scanner shows top 3 trades ranked by ROLV. "
+    "Trade only one at a time. "
+    "Maximum 2 trades per day. "
+    "Use Entry, SL, and Target exactly as shown."
 )
 
 
