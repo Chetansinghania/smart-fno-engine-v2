@@ -6,11 +6,11 @@ from scanner.recommendation import get_recommendation
 from scanner.intraday_tradeplan import get_intraday_tradeplan
 
 st.set_page_config(
-    page_title="SMART F&O ENGINE V5.2",
+    page_title="SMART F&O ENGINE V5.3",
     layout="wide"
 )
 
-st.title("SMART F&O ENGINE V5.2 - TOP 3 TRADES")
+st.title("SMART F&O ENGINE V5.3 - TOP 3 TRADES")
 
 if st.button("Refresh Scanner"):
     st.cache_data.clear()
@@ -50,12 +50,12 @@ for stock in stocks:
     if action not in ["BUY", "SELL"]:
         continue
 
-    entry, sl, target, rr, setup_time, rolv = cached_tradeplan(stock, action, price)
+    entry, sl, target1, target2, rr, setup_time, rolv = cached_tradeplan(stock, action, price)
 
     if setup_time == "WAIT":
         continue
 
-    if entry is None or sl is None or target is None:
+    if entry is None or sl is None or target1 is None or target2 is None:
         continue
 
     results.append({
@@ -65,7 +65,8 @@ for stock in stocks:
         "ROLV": rolv,
         "Entry": entry,
         "SL": sl,
-        "Target": target,
+        "Target 1": target1,
+        "Target 2": target2,
         "RR": rr
     })
 
@@ -96,7 +97,7 @@ ranked_df = df.sort_values(
 
 st.subheader("TOP 3 TRADES")
 
-st.success("Top 3 trades are ranked by ROLV. Trade only one at a time.")
+st.success("Top 3 trades ranked by ROLV. Book 50% at Target 1 and trail rest to Target 2.")
 
 st.dataframe(
     ranked_df,
@@ -107,10 +108,11 @@ st.dataframe(
 st.subheader("Trading Rule")
 
 st.info(
-    "Scanner shows top 3 trades ranked by ROLV. "
     "Trade only one at a time. "
-    "Maximum 2 trades per day. "
-    "Use Entry, SL, and Target exactly as shown."
+    "Book 50% quantity at Target 1. "
+    "After Target 1, move SL to entry price. "
+    "Hold remaining 50% for Target 2. "
+    "Maximum 2 trades per day."
 )
 
 
